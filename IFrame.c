@@ -1,40 +1,27 @@
 #include"IFrame.h"
-unsigned char buf[1024*188]={0};
-unsigned char Mbuf[10240*188];
+unsigned char gbuf[10240*188];
 
 int Getpid(char *file)
 {	
-	int pid=0;
-	unsigned char *p;
-	FILE *fpr;
-	int size;
-	int ret;
-	unsigned char adaptation_field_control;
-	unsigned char *payload,*pa=NULL;
-//	unsigned char continuity_counter;
-//	unsigned char adaptation_field_length;
-//	unsigned char payload_unit_start_indicator;
-	//    unsigned char last_counter = 0xff;
-	//    int start = 0;
-	fpr = fopen(file, "rb");  //打开文件
-	if(NULL == fpr )
+	FILE *fp = fopen(file, "rb");  //打开文件
+	if(NULL == fp )
 	{
 		return -1;
 	}
-	size = sizeof(buf);//大小，字节数
-	while(!feof(fpr))
+	unsigned char buf[1024*188]={0};
+	int buf_size = sizeof(buf);//大小，字节数
+	unsigned char *p;
+	int pid=0;
+	unsigned char *payload,*pp=NULL;
+	while(!feof(fp))
 	{
-		ret = fread(buf, 1, size, fpr ); //读取的元素个数
+		int read_size = fread(buf, 1, buf_size, fp ); //读取的元素个数
 		p = buf;
 
-		while(p < buf + ret)
+		while(p < buf + read_size)
 		{
-
-			adaptation_field_control = (p[3]>>4)&0x3; //判断是否有可调整字段
-//			continuity_counter = p[3] & 0xf;
-//			payload_unit_start_indicator = (p[1]>>6) & 0x1;
+			unsigned char adaptation_field_control = (p[3]>>4)&0x3; //判断是否有可调整字段
 			payload = NULL;
-//			adaptation_field_length = p[4];
 			switch(adaptation_field_control) //这是针对mpeg ts的.
 			{
 				case 0:
@@ -42,16 +29,16 @@ int Getpid(char *file)
 					break;    //0为保留，2为只有调整无负载, 没有有效载荷
 				case 1:
 					payload = p + 4; //没有调整字段  
-					pa = payload;
+					pp = payload;
 					break;
 				case 3:
 					payload = p + 5 + p[4];//净荷/
-					pa = payload;
+					pp = payload;
 					break;
 			}
-			if(pa == payload) //有负载并且负载为00,00,01,e0(相与之后,视频流ID:0xe0-0xef,音频流ID:0xc0-0xdf)
+			if(pp == payload) //有负载并且负载为00,00,01,e0(视频流ID:0xe0-0xef,音频流ID:0xc0-0xdf)
 			{
-				if( pa[0] == 0 && pa[1] == 0 && pa[2] == 0x01 && ( ( pa[3] & 0xe0 ) == 0xe0 ) )
+				if( pp[0] == 0 && pp[1] == 0 && pp[2] == 0x01 && ( ( pp[3] & 0xe0 ) == 0xe0 ) )
 				{
 					pid = (p[1] & 0x1f) << 8 | p[2];
 
@@ -62,34 +49,30 @@ int Getpid(char *file)
 	}
 	return pid;
 }
+
 //提取ts, 提取指定pid 的包 188字节到文件, ts 是188字节的流,提取了指定pid还是188字节的流
 //这里的pid 是视频流的pid
 int ts_dump(char *srcfile,char *tsfile,int pid)
 {
-	unsigned char *p;
-	int Tssize=0;
 	FILE *fpd,*fp;
-	unsigned short Pid;
-
 	fp = fopen(srcfile,"rb");
 	fpd = fopen(tsfile,"wb");
 	if(fp==NULL || fpd == NULL)
 	{
 		return -1;
 	}
-
 	do{
-		Tssize = fread(Mbuf, 1, sizeof(Mbuf), fp);
-		p = Mbuf;
+		int rd_size = fread(gbuf, 1, sizeof(gbuf), fp);
+		unsigned char *p = gbuf;
 
-		while( p + 188 <= Mbuf + Tssize )//寻找TS包的起始点，
+		while( p + 188 <= gbuf + rd_size )//寻找TS包的起始点，
 		{
-			if( p + 376 < Mbuf + Tssize )//TS超过3个包长
+			if( p + 376 < gbuf + rd_size )//TS超过3个包长
 			{
 				if( *p == 0x47 && *(p+188) == 0x47 && *(p+376) == 0x47 )
 					break;
 			}
-			else if( p + 188 < Mbuf + Tssize )//TS为两个包长
+			else if( p + 188 < gbuf + rd_size )//TS为两个包长
 			{
 				if( *p == 0x47 && *(p+188) == 0x47 )
 					break;
@@ -98,10 +81,10 @@ int ts_dump(char *srcfile,char *tsfile,int pid)
 				break;
 			p++;
 		}
-		while( p < Mbuf + Tssize)//将视频流数据提取出来，写到另一个新的文件中
+		while( p < gbuf + rd_size)//将视频流数据提取出来，写到另一个新的文件中
 		{
-			Pid = ((p[1] & 0x1f)<<8) | p[2];
-			if( Pid == pid)
+			unsigned short pkt_pid = ((p[1] & 0x1f)<<8) | p[2];
+			if( pkt_pid == pid)
 				fwrite(p,1,188,fpd);
 			p += 188;
 		}
@@ -116,36 +99,29 @@ int ts_dump(char *srcfile,char *tsfile,int pid)
 //pes去掉了ts的头部及适配域信息, pcr,opcr就是适配域信息
 int Ts_Pes(char *tsfile,char *pesfile,int pid)
 {
-	FILE *fp_d,*fp_s;
-	int start = 0;
-	int size,total;
-	int err_count = 0;
-	unsigned char *p,*payload;
-	unsigned short Pid;
-	unsigned char last_counter = 0xff;
-	unsigned char Adapcontrol;
-	unsigned char counter; //计数器
 
+	FILE *fp_d,*fp_s;
 	fp_s = fopen( tsfile, "rb");
 	fp_d = fopen( pesfile, "wb");
 	if(fp_s == NULL || fp_d == NULL )
 		return -1;
+	
+	int start = 0;
+	int err_count = 0;
+	unsigned char last_counter = 0xff;
 	//初始化设置值大小
-	total = 0; 
-	size = 0;
-
 	while( ! feof( fp_s ))
 	{
-		size = fread(Mbuf, 1,sizeof(Mbuf), fp_s);
-		p = Mbuf;
+		int size = fread(gbuf, 1,sizeof(gbuf), fp_s);
+		unsigned char *p = gbuf;
 
 		do{
-			Pid = (((p[1] & 0x1f)<<8) | p[2]); //获取pid
-			Adapcontrol = (p[3]>>4)&0x3 ;  //判断自适应区是否有可调整字段
-			counter = p[3]&0xf ; //提取连续计数器
-			if( Pid == pid)
+			unsigned short pkt_pid = (((p[1] & 0x1f)<<8) | p[2]); //获取pid
+			unsigned char Adapcontrol = (p[3]>>4)&0x3 ;  //判断自适应区是否有可调整字段
+			unsigned char counter = p[3]&0xf ; //提取连续计数器
+			if( pkt_pid == pid)
 			{
-				payload = NULL;
+				unsigned char *payload = NULL;
 				switch(Adapcontrol)
 				{
 					case 0: 
@@ -177,8 +153,7 @@ int Ts_Pes(char *tsfile,char *pesfile,int pid)
 				last_counter = counter ; 
 			}
 			p += 188;
-			total += 188;
-		}while(p<Mbuf+size);
+		}while(p<gbuf+size);
 	}
 	fclose( fp_s );
 	fclose( fp_d );
@@ -192,43 +167,36 @@ int Ts_Pes(char *tsfile,char *pesfile,int pid)
 int pes_es( char *pesfile, char *esfile )
 {
 	FILE *fpd, *fp;
-	unsigned char *p, *payload;
-	unsigned long remain_size;
-	int pes_num, rdsize;
-//	unsigned int last = 0;
-	__int64_t total = 0 /*,wrsize = 0*/;
-	unsigned int read_size;
-//	unsigned char PES_extension_flag;
-	unsigned char PES_header_data_Length;
-
 	fp = fopen( pesfile, "rb" );  
 	fpd = fopen( esfile, "wb" );
 	if( fp == NULL || fpd == NULL )
 		return -1;
 
-	pes_num = 0;
-	remain_size = 0;
-	p = Mbuf;
+	int pes_num = 0;
+	unsigned long remain_size = 0;
+	unsigned char *p = gbuf;
+	unsigned int pes_size;
+	unsigned char PES_header_data_Length;
+
 	while(1)
 	{
 REDO:
-		if( Mbuf + remain_size <= p )   // 定位P
+		if( gbuf + remain_size <= p )   // 定位P
 		{
-			p = Mbuf;
+			p = gbuf;
 			remain_size = 0;
 		}
-		else if( Mbuf < p && p < Mbuf + remain_size ) //调整p , 其实是不会发生的.
+		else if( gbuf < p && p < gbuf + remain_size ) //调整p , 其实是不会发生的.
 		{
-			remain_size -= p - Mbuf;
-			memmove( Mbuf, p, remain_size );
-			p = Mbuf;
+			remain_size -= p - gbuf;
+			memmove( gbuf, p, remain_size );
+			p = gbuf;
 		}
 
-		if( !feof(fp) && remain_size < sizeof(Mbuf) )
+		if( !feof(fp) && remain_size < sizeof(gbuf) )
 		{
-			rdsize = fread( Mbuf+remain_size, 1, sizeof(Mbuf)-remain_size, fp );
+			int rdsize = fread( gbuf+remain_size, 1, sizeof(gbuf)-remain_size, fp );
 			remain_size += rdsize;
-			total += rdsize;
 		}
 		if( remain_size <= 0 )
 			break;
@@ -238,19 +206,19 @@ REDO:
 				( ( p[3] & 0xe0 ) != 0xe0 ))
 		{
 			p++;
-			if( Mbuf + remain_size <= p )
+			if( gbuf + remain_size <= p )
 				goto REDO;
 		}
 		// PES_packet_Length 
-		read_size = (p[4]<<8) | p[5];
+		pes_size = (p[4]<<8) | p[5];
 
-		if( read_size == 0 ) //等于0要自己计算长度
+		if( pes_size == 0 ) //等于0要自己计算长度
 		{
 			unsigned char *end = p + 6;
 			while( end[0] != 0 || end[1] != 0 || end[2] != 0x01 ||
 					( ( end[3] & 0xe0 ) != 0xe0 ))
 			{
-				if( Mbuf + remain_size <= end )
+				if( gbuf + remain_size <= end )
 				{
 					if( feof(fp) )
 						break;
@@ -258,9 +226,9 @@ REDO:
 				}
 				end++;   //找到下一个pes的起始点
 			}
-			read_size = end - p - 6;  //下一个pes 的起始点减去p再减6既是length
+			pes_size = end - p - 6;  //下一个pes 的起始点减去p再减6既是length
 		}
-		if( Mbuf + remain_size < p + 6 + read_size )
+		if( gbuf + remain_size < p + 6 + pes_size )
 		{
 			if( feof(fp) )
 				break;
@@ -274,20 +242,20 @@ REDO:
 		PES_header_data_Length = *p;
 		p++; // 到此加了3个bytes
 
-		payload = p + PES_header_data_Length;//负载
+		unsigned char *payload = p + PES_header_data_Length;//负载
 
 		if( fpd )
 		{
-			fwrite( payload, 1, read_size - 3 - PES_header_data_Length, fpd );//将负载ES写入文件
+			fwrite( payload, 1, pes_size - 3 - PES_header_data_Length, fpd );//将负载ES写入文件
 
 		}
 		pes_num++;   //PES的数目+1
-		p += read_size - 3;
+		p += pes_size - 3;
 
 		payload = p;
-		remain_size -= p - Mbuf;
-		memmove( Mbuf, p, remain_size );
-		p = Mbuf;
+		remain_size -= p - gbuf;
+		memmove( gbuf, p, remain_size );
+		p = gbuf;
 	}
 
 	fclose( fp );
@@ -301,13 +269,6 @@ REDO:
 //es_buf[5]&0x38>>3表示类型,IPB帧
 int es_iframe(char *esfile, char *ifile )
 {
-	unsigned char *p, *PI;
-	unsigned char picture_coding_type;
-	int num_video_sequence=0;
-	int num_Group_of_picture=0;
-	int num_I=0;
-	int num_B=0;
-	int num_P=0;
 	// 打开ES文件 和 IFRAME文件 
 	FILE *fd_es = fopen( esfile, "rb" );
 	FILE *fd_i = fopen( ifile, "wb" );
@@ -316,7 +277,13 @@ int es_iframe(char *esfile, char *ifile )
 		printf( "error: open file error!\n" );
 		return -1;
 	}
+	int num_video_sequence=0;
+	int num_Group_of_picture=0;
+	int num_I=0;
+	int num_B=0;
+	int num_P=0;
 
+	unsigned char *p, *PI;
 	int remain_size = 0;
 	int total = 0;
 	int flag_sequence = 0;
@@ -324,12 +291,12 @@ int es_iframe(char *esfile, char *ifile )
 	while( !feof( fd_es ) )
 	{
 		/* 读入ES文件，remain_size表示当前缓存中还有多少字节数据 */
-		int read_size = fread( Mbuf+remain_size, 1, sizeof(Mbuf) - remain_size, fd_es );
+		int read_size = fread( gbuf+remain_size, 1, sizeof(gbuf) - remain_size, fd_es );
 
-		p = Mbuf;
+		p = gbuf;
 		PI = NULL; /* 指向Sequence 或 Picture 的开始位置 */
 
-		while( p+6 < Mbuf+remain_size+read_size )
+		while( p+6 < gbuf+remain_size+read_size )
 		{
 			/* 寻找前缀0x000001 */
 			if( 0x00 == p[0] && 0x00 == p[1] && 0x01 == p[2] )
@@ -347,7 +314,7 @@ int es_iframe(char *esfile, char *ifile )
 				}
 
 				/* Picture header 的开始代码 0x00 */
-				picture_coding_type = (p[5]&0x38) >>3; /* 帧类型, 第42-44位 */
+				unsigned char picture_coding_type = (p[5]&0x38) >>3; /* 帧类型, 第42-44位 */
 				if( 0x00 == p[3] && 1 == picture_coding_type )
 				{   
 					num_I++;
@@ -381,13 +348,13 @@ int es_iframe(char *esfile, char *ifile )
 		/* 确定缓存中未处理数据的大小, 并移至缓存的开始处 */
 		if( NULL == PI )
 		{
-			remain_size = Mbuf+read_size+remain_size - p;
-			memmove( Mbuf, p, remain_size );
+			remain_size = gbuf+read_size+remain_size - p;
+			memmove( gbuf, p, remain_size );
 		}
 		else
 		{
-			remain_size = Mbuf+read_size+remain_size - PI;
-			memmove( Mbuf, PI, remain_size );
+			remain_size = gbuf+read_size+remain_size - PI;
+			memmove( gbuf, PI, remain_size );
 			num_I--;
 		}
 	}
@@ -447,10 +414,10 @@ int es_pes(char *es_src, char *pes_des,int num_pes)
 	unsigned char *p_save = NULL;
 	while(!feof(es_fp))
 	{
-		read_size = fread(Mbuf + remain_size, 1, sizeof(Mbuf) - remain_size, es_fp);
-		p = Mbuf;
+		read_size = fread(gbuf + remain_size, 1, sizeof(gbuf) - remain_size, es_fp);
+		p = gbuf;
 
-		while( p + 3 < Mbuf + read_size +remain_size)
+		while( p + 3 < gbuf + read_size +remain_size)
 		{
 			memset(pes_header, 0, sizeof(pes_header));
 			if (p[0] == 0x0 && p[1] == 0x0 && p[2] == 0x1 && 0xB3 == p[3])   //前缀为001+sequence_header_code
@@ -511,13 +478,13 @@ LAST_I:
 			{
 				goto LAST_I; 
 			}
-			remain_size = Mbuf + read_size + remain_size - p_save; 
-			memmove(Mbuf, p_save, remain_size);  
+			remain_size = gbuf + read_size + remain_size - p_save; 
+			memmove(gbuf, p_save, remain_size);  
 		}
 		else
 		{
-			remain_size = Mbuf + read_size + remain_size - p;
-			memmove(Mbuf, p, remain_size);
+			remain_size = gbuf + read_size + remain_size - p;
+			memmove(gbuf, p, remain_size);
 		}
 
 		p_save = NULL;
@@ -532,17 +499,8 @@ LAST_I:
 /*打包成TS包, 加入ts包头及调整字段*/
 int pes_ts(char *pesfile,char *tsfile ,int pid)
 {
-	FILE *ts_fp, *pes_fp;
-	int bFindPes = 0;
-	int iLength = 0;
-	int remain_size = 0;
-	int pes_packet_Length = 0;
-	unsigned char *p;
-	unsigned char counter = 0;
-	unsigned char *p_save = NULL;
-	unsigned char ts_buf[188] = {0};
-	unsigned char start_indicator_flag = 0;
 
+	FILE *pes_fp,*ts_fp;
 	pes_fp = fopen(pesfile, "rb");
 	ts_fp = fopen(tsfile, "wb");
 	if( ts_fp == NULL || pes_fp == NULL )
@@ -550,18 +508,23 @@ int pes_ts(char *pesfile,char *tsfile ,int pid)
 		return -1;
 	}
 
+	unsigned char ts_buf[188] = {0};
 	/*设ts参数*/
 	ts_buf[0] = 0x47;   //添加头部信息
 	ts_buf[1] = 0x62;//修改了PID
 	ts_buf[2] = pid&0x00ff;
 
+	unsigned char counter = 0;
+	int remain_size = 0;
+	unsigned char *p_save = NULL;
+	int bFindPes = 0;
 	while(!feof(pes_fp))
 	{
-		iLength = fread(Mbuf+remain_size, 1, sizeof(Mbuf)-remain_size, pes_fp);   //读文件
-		//remain_size+=iLength;
-		p = Mbuf;
+		int rdsize = fread(gbuf+remain_size, 1, sizeof(gbuf)-remain_size, pes_fp);   //读文件
+		//remain_size+=rdsize;
+		unsigned char *p = gbuf;
 
-		while( p + 6 < Mbuf + iLength +remain_size)  //头部6字节
+		while( p + 6 < gbuf + rdsize +remain_size)  //头部6字节
 		{
 			if (0 == p[0] && 0 == p[1] && 0x01 == p[2] && 0xE0 == p[3]) //进入，pes分组码
 			{  
@@ -572,8 +535,8 @@ int pes_ts(char *pesfile,char *tsfile ,int pid)
 				}
 				else
 				{
-					pes_packet_Length = p - p_save;   //pes包长度
-					start_indicator_flag = 0; 
+					int pes_packet_Length = p - p_save;   //pes包长度
+					unsigned char start_indicator_flag = 0; 
 
 					while (1)
 					{
@@ -628,15 +591,15 @@ int pes_ts(char *pesfile,char *tsfile ,int pid)
 
 		if (1 == bFindPes)   
 		{
-			remain_size = Mbuf + iLength + remain_size - p_save; 
-			memmove(Mbuf, p_save, remain_size); 
+			remain_size = gbuf + rdsize + remain_size - p_save; 
+			memmove(gbuf, p_save, remain_size); 
 			p_save = NULL;
 			bFindPes = 0;
 		}
 		else
 		{
-			remain_size =Mbuf + iLength + remain_size - p;
-			memmove(Mbuf , p , remain_size);
+			remain_size =gbuf + rdsize + remain_size - p;
+			memmove(gbuf , p , remain_size);
 		}  
 	} 
 
