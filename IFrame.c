@@ -1,7 +1,7 @@
 #include"IFrame.h"
 unsigned char gbuf[10240*188];
 
-int Getpid(char *file)
+int getVideoPid(char *file)
 {	
 	FILE *fp = fopen(file, "rb");  //打开文件
 	if(NULL == fp )
@@ -52,7 +52,7 @@ int Getpid(char *file)
 
 //提取ts, 提取指定pid 的包 188字节到文件, ts 是188字节的流,提取了指定pid还是188字节的流
 //这里的pid 是视频流的pid
-int ts_dump(char *srcfile,char *tsfile,int pid)
+int ts_dump_video(char *srcfile,char *tsfile,int pid)
 {
 	FILE *fpd,*fp;
 	fp = fopen(srcfile,"rb");
@@ -92,12 +92,12 @@ int ts_dump(char *srcfile,char *tsfile,int pid)
 
 	fclose(fp );
 	fclose(fpd );
-	printf("ts_dump() end\n");
+	printf("ts_dump_video() end\n");
 	return 0;
 }
 //提取pes, 把该pid 下有效负载写到一个文件, 就是pes文件
 //pes去掉了ts的头部及适配域信息, pcr,opcr就是适配域信息
-int Ts_Pes(char *tsfile,char *pesfile,int pid)
+int ts2pes(char *tsfile,char *pesfile,int pid)
 {
 
 	FILE *fp_d,*fp_s;
@@ -164,7 +164,7 @@ int Ts_Pes(char *tsfile,char *pesfile,int pid)
 //pes 文件是由一系列00 00 01 e0 开始的二进制数据构成的文件
 //es 是去掉了pes头部6字节并去掉了3+pes_header_data_Length个数据构成的文件
 //pes->es
-int pes_es( char *pesfile, char *esfile )
+int pes2es( char *pesfile, char *esfile )
 {
 	FILE *fpd, *fp;
 	fp = fopen( pesfile, "rb" );  
@@ -267,7 +267,7 @@ REDO:
 //es->I
 //es 是由00 00 01 开始的二进制数据构成的文件,后面跟b3表示刷新
 //es_buf[5]&0x38>>3表示类型,IPB帧
-int es_iframe(char *esfile, char *ifile )
+int es2iframe(char *esfile, char *ifile )
 {
 	// 打开ES文件 和 IFRAME文件 
 	FILE *fd_es = fopen( esfile, "rb" );
@@ -391,7 +391,7 @@ unsigned int SetPtsTimeStamp( unsigned char *buf, unsigned int time_stemp)
 //es打包成pes
 //这里构建了PES header 19个字节,6头部+3byte(标记+7flag+len)+10bytes(pts+dts)
 //pes 中包含了pts,dts
-int es_pes(char *es_src, char *pes_des,int num_pes)
+int es2pes(char *es_src, char *pes_des,int num_pes)
 {
 	unsigned char pes_header[19];//header长度
 	unsigned int  pes_packet_Length = 0;
@@ -497,7 +497,7 @@ LAST_I:
 	return 0;
 }
 /*打包成TS包, 加入ts包头及调整字段*/
-int pes_ts(char *pesfile,char *tsfile ,int pid)
+int pes2ts(char *pesfile,char *tsfile ,int pid)
 {
 
 	FILE *pes_fp,*ts_fp;
